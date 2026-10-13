@@ -46,5 +46,19 @@ provider "aws" {
   region = var.aws_region
 }
 
+# VPC for EKS cluster
+module "vpc" {
+  source      = "./modules/vpc"
+  environment = var.environment
+}
+
+# EKS Kubernetes cluster with security controls
+module "eks" {
+  source       = "./modules/eks"
+  project_name = var.project_name
+  environment  = var.environment
+  subnet_ids   = module.vpc.private_subnet_ids
+}
+
 # Remote state would go in S3 in a real environment
 # Using local state for this portfolio project
