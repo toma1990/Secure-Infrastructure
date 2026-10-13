@@ -1,0 +1,16 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+crash.log
+
+# Nano backups
+*.save
+*.save.*
+
+# Python
+__pycache__/
+*.pyc
+venv/
