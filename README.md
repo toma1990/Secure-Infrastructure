@@ -81,3 +81,41 @@ Planning to add:
 - GitHub Actions CI/CD pipeline with automated Terraform 
   security scanning using tfsec
 - Security Hub integration for centralised findings
+
+## Known issues and production considerations
+
+This is a learning project and several decisions were made for 
+simplicity that would be done differently in a production environment.
+
+### Terraform state
+State files were accidentally committed to this repository before
+the .gitignore was properly configured. This demonstrates an important
+lesson - a .gitignore rule does not remove files that are already
+tracked by git. The files have since been removed from history using
+git filter-branch. In production, state should be stored remotely
+in an S3 bucket with DynamoDB locking and never committed to version
+control.
+
+### EKS public endpoint
+The EKS API endpoint is publicly accessible from any IP address.
+In production this would be restricted to specific trusted CIDR
+ranges or set to private-only access. Public access was used here
+to simplify connectivity during development.
+
+### Security auditor role trust policy
+The security auditor role trusts the EC2 service broadly. In
+production the trust policy would be scoped to specific principals
+using conditions, and the permissions would be reviewed against the
+actual needs of each tool rather than using the broad SecurityAudit
+managed policy.
+
+### Local Terraform state
+This project uses local state which is not suitable for team
+environments or production use. A production setup would use an
+S3 backend with DynamoDB state locking and versioning enabled.
+
+### Cost awareness
+The NAT gateway and EKS cluster incur ongoing AWS charges if left
+running. Run terraform destroy when not actively using the cluster.
+The security baseline resources (IAM, CloudTrail, GuardDuty, S3)
+are low cost and can remain deployed.
