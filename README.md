@@ -1,70 +1,82 @@
-# Secure Infrastructure
+# Secure Infrastructure Baseline
 
 Terraform modules that provision a secure AWS environment from scratch 
 with security controls enabled by default. Everything is defined as 
 code so the baseline is reproducible, version controlled, and auditable.
 
-## What it provisions
+## What I set out to solve
 
-Four modules working together to create a secure AWS foundation:
+Manually configuring security controls through the AWS console means 
+they can be accidentally changed or deleted with no audit trail. This 
+project codifies the security baseline from my other portfolio projects 
+into Terraform so it is reproducible, reviewable, and version controlled.
 
-### IAM Security Baseline
-- Enforces a strong account-wide password policy (14 char minimum, 
-  90 day expiry, 24 password history)
-- Creates a least-privilege security auditor role for running 
-  security tooling without admin credentials
-- Attaches AWS SecurityAudit managed policy for read-only access
+## What I implemented
 
-### CloudTrail Logging
-- Multi-region trail capturing all management events
-- Logs stored in a dedicated S3 bucket with AES-256 encryption
-- Public access blocked at bucket level
-- Bucket policy restricts writes to CloudTrail service only
-- Log file validation enabled to detect tampering
+Six Terraform modules provisioning a connected security baseline:
 
-### GuardDuty Threat Detection
-- Continuous threat detection across the account
-- S3 log analysis enabled
-- Kubernetes audit log monitoring enabled
-- Malware protection for EC2 EBS volumes enabled
+| Module | Purpose |
+|--------|---------|
+| iam | Account password policy and least-privilege security auditor role |
+| cloudtrail | Multi-region trail with encrypted S3 storage and log validation |
+| guardduty | Threat detection with S3, Kubernetes and malware protection enabled |
+| s3 | Account-level public access block and encrypted IR evidence bucket |
+| vpc | Private and public subnets with NAT gateway for EKS node egress |
+| eks | Kubernetes cluster with KMS secrets encryption and full audit logging |
 
-### S3 Security Baseline
-- Account-wide public access block - no bucket can be made 
-  public regardless of individual bucket settings
-- Dedicated IR evidence bucket with AES-256 encryption
-- Versioning enabled on evidence bucket for integrity
-- Lifecycle policy archives evidence to cheaper storage after 
-  90 days and Glacier after 365 days
+GitHub Actions CI/CD pipeline runs on every push with tfsec and 
+Checkov scanning the Terraform code for security misconfigurations.
 
-## Why I built this
+## Why I chose this approach
 
-Everything in my other security projects - CloudTrail, GuardDuty, 
-IAM roles, S3 buckets - was being configured manually through the 
-AWS console. That means it can be accidentally changed or deleted 
-with no audit trail and no way to restore it quickly.
+Each of the other portfolio projects configures AWS resources manually 
+via boto3. Terraform means those same resources can be provisioned 
+consistently across environments, reviewed in pull requests, and 
+restored quickly if something is accidentally changed or deleted.
 
-This Terraform baseline means the entire security foundation is 
-defined in code, reviewed in Git, and reproducible with a single 
-terraform apply. That is how security infrastructure should be 
-managed in any real environment.
+The module structure separates concerns so security controls can be 
+applied independently without coupling unrelated infrastructure.
 
-## How to use it
+## What I validated
 
-Configure AWS CLI with appropriate credentials, then:
+- terraform validate passed with no errors
+- terraform plan reviewed before every apply
+- terraform apply successfully deployed all resources against a real AWS account
+- GitHub Actions pipeline runs tfsec and Checkov on every push
+- EKS cluster provisioned and node group joined successfully
+- Compliance Scanner (Project 6) confirmed CloudTrail and GuardDuty 
+  controls passing after this baseline was applied
 
-terraform init
-terraform plan
-terraform apply
+## Security decisions and trade-offs
 
-The plan output shows exactly what will be created before anything 
-is deployed. All 15 resources provision in under 30 seconds.
+| Decision | What was done | Production alternative |
+|----------|--------------|----------------------|
+| EKS API access | Public endpoint, 0.0.0.0/0 | Restrict to trusted CIDRs or private only |
+| Terraform state | Local state file | S3 backend with DynamoDB locking |
+| Security auditor role | Trusts EC2 service broadly | Scope trust to specific principals with conditions |
+| NAT gateway | Single AZ for cost | Multi-AZ for high availability |
+| State file exposure | tfstate committed accidentally, removed from history | Never commit state, use remote backend from day one |
 
-## Outputs
+The state file issue was the most important lesson. A .gitignore rule 
+does not remove files already tracked by git. The files were purged 
+from history using git filter-branch. The state files contained no 
+credentials or access keys - only resource IDs and configuration.
 
-After apply, Terraform outputs:
-- Security auditor role ARN
-- CloudTrail S3 bucket name  
-- IR evidence bucket name
+## Cost and teardown
+
+Resources with ongoing costs:
+- EKS cluster: approximately $0.10 per hour
+- NAT gateway: approximately $0.045 per hour plus data transfer
+- CloudTrail: free tier covers most lab usage
+
+The EKS and VPC modules were destroyed after validation to avoid 
+ongoing charges. The security baseline modules (IAM, CloudTrail, 
+GuardDuty, S3) remain deployed as they are low cost and used by 
+other portfolio projects.
+
+To destroy the expensive resources:
+
+terraform destroy -target=module.eks -target=module.vpc
 
 ## Structure
 
@@ -73,49 +85,20 @@ modules/
   cloudtrail/   - Trail, S3 bucket, encryption, bucket policy
   guardduty/    - Detector with all data sources enabled
   s3/           - Account public access block and IR evidence bucket
+  vpc/          - VPC, public and private subnets, NAT gateway
+  eks/          - EKS cluster, node group, KMS secrets encryption
 
-## What's next
+## Required permissions
 
-Planning to add:
-- EKS cluster module with Kubernetes security controls
-- GitHub Actions CI/CD pipeline with automated Terraform 
-  security scanning using tfsec
-- Security Hub integration for centralised findings
+Deploying this baseline requires IAM permissions to create and 
+manage IAM roles and policies, S3 buckets, CloudTrail trails, 
+GuardDuty detectors, VPC resources, and EKS clusters.
 
-## Known issues and production considerations
+## What I would change before production
 
-This is a learning project and several decisions were made for 
-simplicity that would be done differently in a production environment.
-
-### Terraform state
-State files were accidentally committed to this repository before
-the .gitignore was properly configured. This demonstrates an important
-lesson - a .gitignore rule does not remove files that are already
-tracked by git. The files have since been removed from history using
-git filter-branch. In production, state should be stored remotely
-in an S3 bucket with DynamoDB locking and never committed to version
-control.
-
-### EKS public endpoint
-The EKS API endpoint is publicly accessible from any IP address.
-In production this would be restricted to specific trusted CIDR
-ranges or set to private-only access. Public access was used here
-to simplify connectivity during development.
-
-### Security auditor role trust policy
-The security auditor role trusts the EC2 service broadly. In
-production the trust policy would be scoped to specific principals
-using conditions, and the permissions would be reviewed against the
-actual needs of each tool rather than using the broad SecurityAudit
-managed policy.
-
-### Local Terraform state
-This project uses local state which is not suitable for team
-environments or production use. A production setup would use an
-S3 backend with DynamoDB state locking and versioning enabled.
-
-### Cost awareness
-The NAT gateway and EKS cluster incur ongoing AWS charges if left
-running. Run terraform destroy when not actively using the cluster.
-The security baseline resources (IAM, CloudTrail, GuardDuty, S3)
-are low cost and can remain deployed.
+- Remote Terraform state in S3 with DynamoDB locking and versioning
+- EKS API endpoint restricted to specific trusted IP ranges
+- Security auditor role trust policy scoped to specific principals
+- Multi-AZ NAT gateways for production resilience
+- Separate AWS accounts for different environments
+- Automated drift detection to catch manual console changes
