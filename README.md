@@ -1,5 +1,4 @@
-# Automated Incident Response System
-
+# Secure Infrastructure 
 A Python-based incident response tool that monitors AWS GuardDuty 
 for security findings and responds by isolating affected resources 
 and preserving forensic evidence.
