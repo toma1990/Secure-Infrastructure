@@ -1,85 +1,104 @@
-# Secure Infrastructure 
-A Python-based incident response tool that monitors AWS GuardDuty 
-for security findings and responds by isolating affected resources 
-and preserving forensic evidence.
+# Secure Infrastructure Baseline
+
+Terraform modules that provision a secure AWS environment from scratch 
+with security controls enabled by default. Everything is defined as 
+code so the baseline is reproducible, version controlled, and auditable.
 
 ## What I set out to solve
 
-Most cloud security tools focus on detection. When a threat is 
-confirmed, the response is often manual - an analyst reads the 
-finding, decides what to do, and acts. This project automates 
-the containment and evidence preservation steps so the response 
-is consistent and fast regardless of who is on call.
-
-My background in digital forensics at Lincolnshire Police taught 
-me that evidence captured after containment may be compromised. 
-This system captures evidence first, before any containment action.
+Manually configuring security controls through the AWS console means 
+they can be accidentally changed or deleted with no audit trail. This 
+project codifies the security baseline from my other portfolio projects 
+into Terraform so it is reproducible, reviewable, and version controlled.
 
 ## What I implemented
 
-- Connects to GuardDuty and retrieves findings above a severity threshold
-- Opens a case with a unique ID and UTC timestamp for each finding
-- Captures the state of affected EC2 instances before taking action
-- Attempts to isolate compromised instances by moving them to a 
-  dedicated security group with no ingress or egress rules
-- Saves a timestamped evidence package to S3 with AES-256 encryption
-- Maintains a chain of custody log recording every action taken
-- Includes a Lambda handler for event-driven deployment
+Six Terraform modules provisioning a connected security baseline:
 
-## What was actually tested
+| Module | Purpose |
+|--------|---------|
+| iam | Account password policy and least-privilege security auditor role |
+| cloudtrail | Multi-region trail with encrypted S3 storage and log validation |
+| guardduty | Threat detection with S3, Kubernetes and malware protection enabled |
+| s3 | Account-level public access block and encrypted IR evidence bucket |
+| vpc | Private and public subnets with NAT gateway for EKS node egress |
+| eks | Kubernetes cluster with KMS secrets encryption and full audit logging |
 
-The script was run against a live AWS account with GuardDuty sample 
-findings enabled. Two findings were processed:
-
-- UnauthorizedAccess:IAMUser/MaliciousIPCaller - case opened, 
-  isolation attempted (failed on sample instance i-99999999 as 
-  expected - sample findings use fake instance IDs)
-- Policy:IAMUser/RootCredentialUsage - case opened, evidence 
-  captured and saved to S3 successfully
-
-Evidence packages were confirmed in S3 with correct encryption.
-The Lambda handler function exists in the code but full EventBridge 
-triggered deployment has not been tested end to end.
+GitHub Actions CI/CD pipeline runs on every push with tfsec and 
+Checkov scanning the Terraform code for security misconfigurations.
 
 ## Why I chose this approach
 
-Evidence capture before containment reflects forensic best practice. 
-In a real investigation, instance state at the time of detection is 
-more valuable than state after isolation. The chain of custody log 
-means every action is timestamped and attributable.
+Each of the other portfolio projects configures AWS resources manually 
+via boto3. Terraform means those same resources can be provisioned 
+consistently across environments, reviewed in pull requests, and 
+restored quickly if something is accidentally changed or deleted.
 
-Security group isolation was chosen over instance termination because 
-it preserves the instance for forensic analysis while preventing 
-lateral movement.
+The module structure separates concerns so security controls can be 
+applied independently without coupling unrelated infrastructure.
 
-## Response sequence
+## What I validated
 
-1. GuardDuty finding detected above severity threshold
-2. Case ID generated with UTC timestamp
-3. Instance state captured - security groups, launch time, running state
-4. Chain of custody record opened
-5. Isolation security group created
-6. Instance moved to isolation security group
-7. Isolation result logged to chain of custody
-8. Complete evidence package saved to S3 with AES-256 encryption
+- terraform validate passed with no errors
+- terraform plan reviewed before every apply
+- terraform apply successfully deployed all resources against a real AWS account
+- GitHub Actions pipeline runs tfsec and Checkov on every push
+- EKS cluster provisioned and node group joined successfully
+- Compliance Scanner (Project 6) confirmed CloudTrail and GuardDuty 
+  controls passing after this baseline was applied
 
-## Resource types handled
+## Security decisions and trade-offs
 
-The current implementation handles EC2 instance findings. GuardDuty 
-findings that do not reference an EC2 instance (such as IAM credential 
-findings) still have a case opened and evidence captured from the 
-finding itself, but no instance isolation is attempted.
+| Decision | What was done | Production alternative |
+|----------|--------------|----------------------|
+| EKS API access | Public endpoint, 0.0.0.0/0 | Restrict to trusted CIDRs or private only |
+| Terraform state | Local state file | S3 backend with DynamoDB locking |
+| Security auditor role | Trusts EC2 service broadly | Scope trust to specific principals with conditions |
+| NAT gateway | Single AZ for cost | Multi-AZ for high availability |
+| State file exposure | tfstate committed accidentally, removed from history | Never commit state, use remote backend from day one |
 
-## Chain of custody limitations
+The state file issue was the most important lesson. A .gitignore rule 
+does not remove files already tracked by git. The files were purged 
+from history using git filter-branch. The state files contained no 
+credentials or access keys - only resource IDs and configuration.
 
-The evidence package is a timestamped JSON record of actions taken 
-and resource state observed. It is useful for incident tracking and 
-audit purposes. It is not cryptographic proof of evidence integrity - 
-no hash verification is implemented in the current version. In a 
-formal investigation the evidence would need additional integrity 
-verification.
+## Cost and teardown
 
-## Operational considerations
+Resources with ongoing costs:
+- EKS cluster: approximately $0.10 per hour
+- NAT gateway: approximately $0.045 per hour plus data transfer
+- CloudTrail: free tier covers most lab usage
 
-This tool was built for a personal learning environment. Before 
-using in a real environment, the following would need
+The EKS and VPC modules were destroyed after validation to avoid 
+ongoing charges. The security baseline modules (IAM, CloudTrail, 
+GuardDuty, S3) remain deployed as they are low cost and used by 
+other portfolio projects.
+
+To destroy the expensive resources:
+
+terraform destroy -target=module.eks -target=module.vpc
+
+## Structure
+
+modules/
+  iam/          - Password policy and security auditor role
+  cloudtrail/   - Trail, S3 bucket, encryption, bucket policy
+  guardduty/    - Detector with all data sources enabled
+  s3/           - Account public access block and IR evidence bucket
+  vpc/          - VPC, public and private subnets, NAT gateway
+  eks/          - EKS cluster, node group, KMS secrets encryption
+
+## Required permissions
+
+Deploying this baseline requires IAM permissions to create and 
+manage IAM roles and policies, S3 buckets, CloudTrail trails, 
+GuardDuty detectors, VPC resources, and EKS clusters.
+
+## What I would change before production
+
+- Remote Terraform state in S3 with DynamoDB locking and versioning
+- EKS API endpoint restricted to specific trusted IP ranges
+- Security auditor role trust policy scoped to specific principals
+- Multi-AZ NAT gateways for production resilience
+- Separate AWS accounts for different environments
+- Automated drift detection to catch manual console changes
